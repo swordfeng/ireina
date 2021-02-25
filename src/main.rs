@@ -187,7 +187,7 @@ async fn gen_message(state: &mut State) -> Result<String> {
         .max()
         .unwrap_or(8);
     Ok(format!(
-        "```BTC {:>width$}\nETH {:>width$}\nDOT {:>width$}```{}",
+        "```\nBTC {:>width$}\nETH {:>width$}\nDOT {:>width$}```{}",
         state.btc,
         state.eth,
         state.dot,
