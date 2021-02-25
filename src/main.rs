@@ -76,6 +76,26 @@ async fn get_gemini_price(pair: &str) -> Result<Decimal> {
     )?)
 }
 
+async fn get_binance_price(pair: &str) -> Result<Decimal> {
+    let response: JsonValue = CLIENT
+        .get(&format!(
+            "https://api.binance.com/api/v3/trades?symbol={}&limit=1",
+            pair
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    if response["code"].is_i64() {
+        return Err(anyhow!("Binance: {}", response["msg"]));
+    }
+    Ok(Decimal::from_str(
+        response[0]["price"]
+            .as_str()
+            .ok_or(anyhow!("Failed to parse Kraken response"))?,
+    )?)
+}
+
 fn median_price_string(data: &mut [Decimal]) -> String {
     data.sort();
     let size = data.len();
@@ -92,13 +112,14 @@ fn median_price_string(data: &mut [Decimal]) -> String {
 }
 
 async fn get_btc_price(errors: &mut Vec<String>) -> String {
-    let (btc1, btc2, btc3) = join!(
+    let (btc1, btc2, btc3, btc4) = join!(
         get_coinbase_price("BTC-USD"),
         get_kraken_price("BTCUSD"),
         get_gemini_price("BTCUSD"),
+        get_binance_price("BTCUSDT"),
     );
     let mut prices = vec![];
-    for b in [btc1, btc2, btc3].iter() {
+    for b in [btc1, btc2, btc3, btc4].iter() {
         match b {
             Ok(price) => prices.push(price.clone()),
             Err(e) => errors.push(e.to_string()),
@@ -108,13 +129,14 @@ async fn get_btc_price(errors: &mut Vec<String>) -> String {
 }
 
 async fn get_eth_price(errors: &mut Vec<String>) -> String {
-    let (eth1, eth2, eth3) = join!(
+    let (eth1, eth2, eth3, eth4) = join!(
         get_coinbase_price("ETH-USD"),
         get_kraken_price("ETHUSD"),
         get_gemini_price("ETHUSD"),
+        get_binance_price("ETHUSDT"),
     );
     let mut prices = vec![];
-    for b in [eth1, eth2, eth3].iter() {
+    for b in [eth1, eth2, eth3, eth4].iter() {
         match b {
             Ok(price) => prices.push(price.clone()),
             Err(e) => errors.push(e.to_string()),
@@ -124,11 +146,13 @@ async fn get_eth_price(errors: &mut Vec<String>) -> String {
 }
 
 async fn get_dot_price(errors: &mut Vec<String>) -> String {
-    let dot1 = get_kraken_price("DOTUSD").await;
+    let (dot1, dot2) = join!(get_kraken_price("DOTUSD"), get_binance_price("DOTUSDT"),);
     let mut prices = vec![];
-    match dot1 {
-        Ok(price) => prices.push(price.clone()),
-        Err(e) => errors.push(e.to_string()),
+    for b in [dot1, dot2].iter() {
+        match b {
+            Ok(price) => prices.push(price.clone()),
+            Err(e) => errors.push(e.to_string()),
+        }
     }
     median_price_string(&mut prices)
 }
@@ -157,9 +181,18 @@ async fn gen_message(state: &mut State) -> Result<String> {
             errors.join("\n")
         )
     };
+    let width = [&state.btc, &state.eth, &state.dot]
+        .iter()
+        .map(|s| s.len())
+        .max()
+        .unwrap_or(8);
     Ok(format!(
-        "BTCUSD={} ETHUSD={} DOTUSD={}{}",
-        state.btc, state.eth, state.dot, errmsg
+        "```BTC {:>width$}\nETH {:>width$}\nDOT {:>width$}```{}",
+        state.btc,
+        state.eth,
+        state.dot,
+        errmsg,
+        width = width,
     ))
 }
 
