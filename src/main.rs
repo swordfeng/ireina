@@ -203,7 +203,7 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
                 let msgstr = gen_message(state).await?;
                 state
                     .api
-                    .send(SendMessage::new(message.chat, msgstr))
+                    .send(SendMessage::new(message.chat, msgstr).parse_mode(ParseMode::Markdown))
                     .compat()
                     .await?;
             }
@@ -217,7 +217,7 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
                 "Coin Prices",
                 InputTextMessageContent {
                     message_text: msgstr,
-                    parse_mode: None,
+                    parse_mode: Some(ParseMode::Markdown),
                     disable_web_page_preview: true,
                 },
             )
