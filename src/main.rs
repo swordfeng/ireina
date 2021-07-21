@@ -6,13 +6,13 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use rust_decimal::prelude::*;
 use serde_json::Value as JsonValue;
-use yahoo_finance_api::YahooConnector;
 use std::env;
 use std::time::Duration;
 use std::time::SystemTime;
 use telegram_bot::*;
 use tokio_compat_02::FutureExt;
 use yahoo_finance_api;
+use yahoo_finance_api::YahooConnector;
 
 static CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
@@ -180,8 +180,24 @@ async fn gen_message(state: &mut State) -> Result<String> {
         state.btc = get_btc_price(&mut errors).await;
         state.eth = get_eth_price(&mut errors).await;
         state.dot = get_dot_price(&mut errors).await;
-        state.gspc = format!("{:.2}", state.yfi.get_latest_quotes("^GSPC", "1m").await?.last_quote()?.close);
-        state.ixic = format!("{:.2}", state.yfi.get_latest_quotes("^IXIC", "1m").await?.last_quote()?.close);
+        state.gspc = format!(
+            "{:.2}",
+            state
+                .yfi
+                .get_latest_quotes("^GSPC", "1m")
+                .await?
+                .last_quote()?
+                .close
+        );
+        state.ixic = format!(
+            "{:.2}",
+            state
+                .yfi
+                .get_latest_quotes("^IXIC", "1m")
+                .await?
+                .last_quote()?
+                .close
+        );
         state.last_update = SystemTime::now();
     }
     let errmsg = if errors.is_empty() {
@@ -198,7 +214,7 @@ async fn gen_message(state: &mut State) -> Result<String> {
         .max()
         .unwrap_or(8);
     Ok(format!(
-        "```\nBTC  {:>width$}\nETH  {:>width$}\nDOT  {:>width$}\nGSPC {:>width$}\nIXIC {:>width$}```{}",
+        "```\nBTC  {:>width$}\nETH  {:>width$}\nDOT  {:>width$}\n\nGSPC {:>width$}\nIXIC {:>width$}```{}",
         state.btc,
         state.eth,
         state.dot,
