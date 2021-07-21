@@ -6,11 +6,13 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use rust_decimal::prelude::*;
 use serde_json::Value as JsonValue;
+use yahoo_finance_api::YahooConnector;
 use std::env;
 use std::time::Duration;
 use std::time::SystemTime;
 use telegram_bot::*;
 use tokio_compat_02::FutureExt;
+use yahoo_finance_api;
 
 static CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
@@ -146,9 +148,13 @@ async fn get_eth_price(errors: &mut Vec<String>) -> String {
 }
 
 async fn get_dot_price(errors: &mut Vec<String>) -> String {
-    let (dot1, dot2) = join!(get_kraken_price("DOTUSD"), get_binance_price("DOTUSDT"),);
+    let (dot1, dot2, dot3) = join!(
+        get_kraken_price("DOTUSD"),
+        get_coinbase_price("DOTUSD"),
+        get_binance_price("DOTUSDT")
+    );
     let mut prices = vec![];
-    for b in [dot1, dot2].iter() {
+    for b in [dot1, dot2, dot3].iter() {
         match b {
             Ok(price) => prices.push(price.clone()),
             Err(e) => errors.push(e.to_string()),
@@ -159,10 +165,13 @@ async fn get_dot_price(errors: &mut Vec<String>) -> String {
 
 struct State {
     api: Api,
+    yfi: yahoo_finance_api::YahooConnector,
     last_update: SystemTime,
     btc: String,
     eth: String,
     dot: String,
+    gspc: String,
+    ixic: String,
 }
 
 async fn gen_message(state: &mut State) -> Result<String> {
@@ -171,6 +180,8 @@ async fn gen_message(state: &mut State) -> Result<String> {
         state.btc = get_btc_price(&mut errors).await;
         state.eth = get_eth_price(&mut errors).await;
         state.dot = get_dot_price(&mut errors).await;
+        state.gspc = format!("{:.2}", state.yfi.get_latest_quotes("^GSPC", "1m").await?.last_quote()?.close);
+        state.ixic = format!("{:.2}", state.yfi.get_latest_quotes("^IXIC", "1m").await?.last_quote()?.close);
         state.last_update = SystemTime::now();
     }
     let errmsg = if errors.is_empty() {
@@ -181,16 +192,18 @@ async fn gen_message(state: &mut State) -> Result<String> {
             errors.join("\n")
         )
     };
-    let width = [&state.btc, &state.eth, &state.dot]
+    let width = [&state.btc, &state.eth, &state.dot, &state.gspc, &state.ixic]
         .iter()
         .map(|s| s.len())
         .max()
         .unwrap_or(8);
     Ok(format!(
-        "```\nBTC {:>width$}\nETH {:>width$}\nDOT {:>width$}```{}",
+        "```\nBTC  {:>width$}\nETH  {:>width$}\nDOT  {:>width$}\nGSPC {:>width$}\nIXIC {:>width$}```{}",
         state.btc,
         state.eth,
         state.dot,
+        state.gspc,
+        state.ixic,
         errmsg,
         width = width,
     ))
@@ -235,10 +248,13 @@ async fn main() -> Result<()> {
 
     let mut state = State {
         api: Api::new(token),
+        yfi: YahooConnector::new(),
         last_update: SystemTime::UNIX_EPOCH,
         btc: String::new(),
         eth: String::new(),
         dot: String::new(),
+        gspc: String::new(),
+        ixic: String::new(),
     };
 
     let mut stream = state.api.stream();
