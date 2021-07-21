@@ -149,7 +149,7 @@ async fn get_eth_price(errors: &mut Vec<String>) -> String {
 
 async fn get_dot_price(errors: &mut Vec<String>) -> String {
     let (dot1, dot2, dot3) = join!(
-        get_kraken_price("DOTUSD"),
+        get_kraken_price("DOT-USD"),
         get_coinbase_price("DOTUSD"),
         get_binance_price("DOTUSDT")
     );
