@@ -172,33 +172,94 @@ struct State {
     dot: String,
     gspc: String,
     ixic: String,
+    btc6h: String,
+    eth6h: String,
+    dot6h: String,
+    gspc6h: String,
+    ixic6h: String,
+}
+
+async fn yfi_get(
+    yfi: &yahoo_finance_api::YahooConnector,
+    symbol: &str,
+) -> Result<(String, String)> {
+    let quotes = if symbol.ends_with("-USD") {
+        yfi.get_quote_range(symbol, "1h", "2d")
+    } else {
+        yfi.get_quote_range(symbol, "1d", "2d")
+    }
+    .await?
+    .quotes()?
+    .into_iter()
+    .rev()
+    .collect::<Vec<_>>();
+    let prev_price = if symbol.ends_with("-USD") {
+        if quotes.len() >= 25 {
+            quotes[24].close
+        } else {
+            0.
+        }
+    } else {
+        if quotes.len() >= 2 {
+            quotes[1].adjclose
+        } else {
+            0.
+        }
+    };
+    if quotes.len() == 0 {
+        Ok(("N/A".to_owned(), "N/A".to_owned()))
+    } else if prev_price == 0. {
+        Ok((format!("{:.2}", quotes[0].close), "N/A".to_owned()))
+    } else {
+        let change = if symbol.ends_with("-USD") {
+            (quotes[0].close / prev_price - 1.) * 100.
+        } else {
+            (quotes[0].adjclose / prev_price - 1.) * 100.
+        };
+        Ok((
+            format!("{:.2}", quotes[0].close),
+            format!("{:>+.2}%", change),
+        ))
+    }
+}
+
+async fn yfi_get_wrapped(
+    yfi: &yahoo_finance_api::YahooConnector,
+    symbol: &str,
+    errors: &mut Vec<String>,
+) -> (String, String) {
+    yfi_get(yfi, symbol).await.unwrap_or_else(|err| {
+        errors.push(err.to_string());
+        ("ERROR".to_owned(), String::new())
+    })
+}
+
+async fn update_state(state: &mut State, errors: &mut Vec<String>) {
+    state.btc = get_btc_price(errors).await;
+    state.eth = get_eth_price(errors).await;
+    state.dot = get_dot_price(errors).await;
+
+    let (_, btc6h) = yfi_get_wrapped(&state.yfi, "BTC-USD", errors).await;
+    state.btc6h = btc6h;
+    let (_, eth6h) = yfi_get_wrapped(&state.yfi, "ETH-USD", errors).await;
+    state.eth6h = eth6h;
+    let (_, dot6h) = yfi_get_wrapped(&state.yfi, "DOT1-USD", errors).await;
+    state.dot6h = dot6h;
+
+    let (gspc, gspc6h) = yfi_get_wrapped(&state.yfi, "^GSPC", errors).await;
+    state.gspc = gspc;
+    state.gspc6h = gspc6h;
+    let (ixic, ixic6h) = yfi_get_wrapped(&state.yfi, "^IXIC", errors).await;
+    state.ixic = ixic;
+    state.ixic6h = ixic6h;
+
+    state.last_update = SystemTime::now();
 }
 
 async fn gen_message(state: &mut State) -> Result<String> {
     let mut errors = vec![];
     if state.last_update.elapsed()? > Duration::from_secs(3) {
-        state.btc = get_btc_price(&mut errors).await;
-        state.eth = get_eth_price(&mut errors).await;
-        state.dot = get_dot_price(&mut errors).await;
-        state.gspc = format!(
-            "{:.2}",
-            state
-                .yfi
-                .get_latest_quotes("^GSPC", "1m")
-                .await?
-                .last_quote()?
-                .close
-        );
-        state.ixic = format!(
-            "{:.2}",
-            state
-                .yfi
-                .get_latest_quotes("^IXIC", "1m")
-                .await?
-                .last_quote()?
-                .close
-        );
-        state.last_update = SystemTime::now();
+        update_state(state, &mut errors).await;
     }
     let errmsg = if errors.is_empty() {
         String::new()
@@ -213,15 +274,32 @@ async fn gen_message(state: &mut State) -> Result<String> {
         .map(|s| s.len())
         .max()
         .unwrap_or(8);
+    let width2 = [
+        &state.btc6h,
+        &state.eth6h,
+        &state.dot6h,
+        &state.gspc6h,
+        &state.ixic6h,
+    ]
+    .iter()
+    .map(|s| s.len())
+    .max()
+    .unwrap_or(8);
     Ok(format!(
-        "```\nBTC  {:>width$}\nETH  {:>width$}\nDOT  {:>width$}\n\nGSPC {:>width$}\nIXIC {:>width$}```{}",
+        "```\nBTC  {:>width$} {:>width2$}\nETH  {:>width$} {:>width2$}\nDOT  {:>width$} {:>width2$}\n\nGSPC {:>width$} {:>width2$}\nIXIC {:>width$} {:>width2$}```{}",
         state.btc,
+        state.btc6h,
         state.eth,
+        state.eth6h,
         state.dot,
+        state.dot6h,
         state.gspc,
+        state.gspc6h,
         state.ixic,
+        state.ixic6h,
         errmsg,
         width = width,
+        width2 = width2,
     ))
 }
 
@@ -271,6 +349,11 @@ async fn main() -> Result<()> {
         dot: String::new(),
         gspc: String::new(),
         ixic: String::new(),
+        btc6h: String::new(),
+        eth6h: String::new(),
+        dot6h: String::new(),
+        gspc6h: String::new(),
+        ixic6h: String::new(),
     };
 
     let mut stream = state.api.stream();
