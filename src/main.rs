@@ -109,7 +109,7 @@ fn median_price_string(data: &mut [Decimal]) -> String {
     } else {
         data[size / 2]
     })
-    .round_dp_with_strategy(2, RoundingStrategy::BankersRounding)
+    .round_dp_with_strategy(2, RoundingStrategy::MidpointNearestEven)
     .to_string()
 }
 
@@ -184,7 +184,7 @@ async fn yfi_get(
     symbol: &str,
 ) -> Result<(String, String)> {
     let quotes = if symbol.ends_with("-USD") {
-        yfi.get_quote_range(symbol, "1h", "2d")
+        yfi.get_quote_range(symbol, "1h", "3d")
     } else {
         yfi.get_quote_range(symbol, "1d", "2d")
     }
@@ -357,6 +357,7 @@ async fn main() -> Result<()> {
     };
 
     let mut stream = state.api.stream();
+    stream.allowed_updates(&[AllowedUpdate::Message, AllowedUpdate::InlineQuery]);
     while let Some(update) = stream.next().compat().await {
         let update = match update {
             Ok(u) => u,
