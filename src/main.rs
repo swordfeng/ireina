@@ -243,7 +243,7 @@ async fn update_state(state: &mut State, errors: &mut Vec<String>) {
     state.btc6h = btc6h;
     let (_, eth6h) = yfi_get_wrapped(&state.yfi, "ETH-USD", errors).await;
     state.eth6h = eth6h;
-    let (_, dot6h) = yfi_get_wrapped(&state.yfi, "DOT1-USD", errors).await;
+    let (_, dot6h) = yfi_get_wrapped(&state.yfi, "DOT-USD", errors).await;
     state.dot6h = dot6h;
 
     let (gspc, gspc6h) = yfi_get_wrapped(&state.yfi, "^GSPC", errors).await;
