@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 use anyhow::{anyhow, Result};
 use futures::join;
 use futures::StreamExt;
@@ -6,6 +5,7 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use rust_decimal::prelude::*;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
 use std::env;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -177,6 +177,7 @@ struct State {
     dot6h: String,
     gspc6h: String,
     ixic6h: String,
+    query_responses: BTreeMap<MessageChat, (MessageId, MessageId)>,
 }
 
 async fn yfi_get(
@@ -308,11 +309,18 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
         if let MessageKind::Text { ref data, .. } = message.kind {
             if data.starts_with("/query") {
                 let msgstr = gen_message(state).await?;
-                state
+                let msg_resp = state
                     .api
-                    .send(SendMessage::new(message.chat, msgstr).parse_mode(ParseMode::Markdown))
+                    .send(SendMessage::new(&message.chat, msgstr).parse_mode(ParseMode::Markdown).reply_to(message.id))
                     .compat()
                     .await?;
+                if let Some((last_resp_id, last_query_id)) = state.query_responses.get(&message.chat) {
+                    let _ = state.api.send(DeleteMessage::new(&message.chat, last_resp_id)).await;
+                    let _ = state.api.send(DeleteMessage::new(&message.chat, last_query_id)).await;
+                }
+                if let MessageOrChannelPost::Message(resp_message) = msg_resp {
+                    state.query_responses.insert(message.chat, (resp_message.id, message.id));
+                }
             }
         }
     } else if let UpdateKind::InlineQuery(query) = update.kind {
@@ -354,6 +362,7 @@ async fn main() -> Result<()> {
         dot6h: String::new(),
         gspc6h: String::new(),
         ixic6h: String::new(),
+        query_responses: BTreeMap::new(),
     };
 
     let mut stream = state.api.stream();
