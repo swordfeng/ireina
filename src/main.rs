@@ -98,6 +98,21 @@ async fn get_binance_price(pair: &str) -> Result<Decimal> {
     )?)
 }
 
+async fn get_goldapi_price(apikey: &str, metal: &str, currency: &str) -> Result<Decimal> {
+    let response: JsonValue = CLIENT
+        .get(&format!("https://www.goldapi.io/api/{}/{}", metal, currency))
+        .header("x-access-token", apikey)
+        .send()
+        .await?
+        .json()
+        .await?;
+    Ok(response["price"]
+        .as_f64()
+        .and_then(Decimal::from_f64)
+        .map(|d| d.round_dp(2))
+        .ok_or(anyhow!("Failed to parse GoldAPI response"))?)
+}
+
 fn median_price_string(data: &mut [Decimal]) -> String {
     data.sort();
     let size = data.len();
@@ -147,14 +162,15 @@ async fn get_eth_price(errors: &mut Vec<String>) -> String {
     median_price_string(&mut prices)
 }
 
-async fn get_dot_price(errors: &mut Vec<String>) -> String {
-    let (dot1, dot2, dot3) = join!(
-        get_kraken_price("DOTUSD"),
-        get_coinbase_price("DOT-USD"),
-        get_binance_price("DOTUSDT")
+async fn get_gold_price(state: &State, errors: &mut Vec<String>) -> String {
+    let (gold1, gold2, gold3) = join!(
+        get_coinbase_price("XAU-USD"),
+        get_goldapi_price(&state.goldapi_apikey, "XAU", "USD"),
+        yfi_get(&state.yfi, "GC=F"),
     );
+    let gold3 = gold3.and_then(|(price, _)| Decimal::from_str(&price).map_err(anyhow::Error::from));
     let mut prices = vec![];
-    for b in [dot1, dot2, dot3].iter() {
+    for b in [gold1, gold2, gold3].iter() {
         match b {
             Ok(price) => prices.push(price.clone()),
             Err(e) => errors.push(e.to_string()),
@@ -166,15 +182,16 @@ async fn get_dot_price(errors: &mut Vec<String>) -> String {
 struct State {
     api: Api,
     yfi: yahoo_finance_api::YahooConnector,
+    goldapi_apikey: String,
     last_update: SystemTime,
     btc: String,
     eth: String,
-    dot: String,
+    xau: String,
     gspc: String,
     ixic: String,
     btc6h: String,
     eth6h: String,
-    dot6h: String,
+    xau6h: String,
     gspc6h: String,
     ixic6h: String,
     query_responses: BTreeMap<MessageChat, (MessageId, MessageId)>,
@@ -238,14 +255,14 @@ async fn yfi_get_wrapped(
 async fn update_state(state: &mut State, errors: &mut Vec<String>) {
     state.btc = get_btc_price(errors).await;
     state.eth = get_eth_price(errors).await;
-    state.dot = get_dot_price(errors).await;
+    state.xau = get_gold_price(&*state, errors).await;
 
     let (_, btc6h) = yfi_get_wrapped(&state.yfi, "BTC-USD", errors).await;
     state.btc6h = btc6h;
     let (_, eth6h) = yfi_get_wrapped(&state.yfi, "ETH-USD", errors).await;
     state.eth6h = eth6h;
-    let (_, dot6h) = yfi_get_wrapped(&state.yfi, "DOT-USD", errors).await;
-    state.dot6h = dot6h;
+    let (_, xau6h) = yfi_get_wrapped(&state.yfi, "GC=F", errors).await;
+    state.xau6h = xau6h;
 
     let (gspc, gspc6h) = yfi_get_wrapped(&state.yfi, "^GSPC", errors).await;
     state.gspc = gspc;
@@ -270,7 +287,7 @@ async fn gen_message(state: &mut State) -> Result<String> {
             errors.join("\n")
         )
     };
-    let width = [&state.btc, &state.eth, &state.dot, &state.gspc, &state.ixic]
+    let width = [&state.btc, &state.eth, &state.gspc, &state.ixic, &state.xau]
         .iter()
         .map(|s| s.len())
         .max()
@@ -278,26 +295,33 @@ async fn gen_message(state: &mut State) -> Result<String> {
     let width2 = [
         &state.btc6h,
         &state.eth6h,
-        &state.dot6h,
         &state.gspc6h,
         &state.ixic6h,
+        &state.xau6h,
     ]
     .iter()
     .map(|s| s.len())
     .max()
     .unwrap_or(8);
     Ok(format!(
-        "```\nBTC  {:>width$} {:>width2$}\nETH  {:>width$} {:>width2$}\nDOT  {:>width$} {:>width2$}\n\nGSPC {:>width$} {:>width2$}\nIXIC {:>width$} {:>width2$}```{}",
+        "```\n\
+        BTC  {:>width$} {:>width2$}\n\
+        ETH  {:>width$} {:>width2$}\n\
+        \n\
+        GSPC {:>width$} {:>width2$}\n\
+        IXIC {:>width$} {:>width2$}\n\
+        XAU  {:>width$} {:>width2$}\n\
+        ```{}",
         state.btc,
         state.btc6h,
         state.eth,
         state.eth6h,
-        state.dot,
-        state.dot6h,
         state.gspc,
         state.gspc6h,
         state.ixic,
         state.ixic6h,
+        state.xau,
+        state.xau6h,
         errmsg,
         width = width,
         width2 = width2,
@@ -347,19 +371,21 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let token = env::var("IREINA_TOKEN")?;
+    let goldapi_apikey = env::var("GOLDAPI_APIKEY")?;
 
     let mut state = State {
         api: Api::new(token),
         yfi: YahooConnector::new(),
+        goldapi_apikey,
         last_update: SystemTime::UNIX_EPOCH,
         btc: String::new(),
         eth: String::new(),
-        dot: String::new(),
+        xau: String::new(),
         gspc: String::new(),
         ixic: String::new(),
         btc6h: String::new(),
         eth6h: String::new(),
-        dot6h: String::new(),
+        xau6h: String::new(),
         gspc6h: String::new(),
         ixic6h: String::new(),
         query_responses: BTreeMap::new(),
