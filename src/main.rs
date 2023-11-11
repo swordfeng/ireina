@@ -16,7 +16,7 @@ use yahoo_finance_api::YahooConnector;
 
 static CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
-        .user_agent("Ireina 0.1.0")
+        .user_agent("ireina/0.1.0")
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap()
@@ -74,7 +74,7 @@ async fn get_gemini_price(pair: &str) -> Result<Decimal> {
     Ok(Decimal::from_str(
         response["last"]
             .as_str()
-            .ok_or(anyhow!("Failed to parse Kraken response"))?,
+            .ok_or(anyhow!("Failed to parse Gemini response"))?,
     )?)
 }
 
@@ -94,7 +94,7 @@ async fn get_binance_price(pair: &str) -> Result<Decimal> {
     Ok(Decimal::from_str(
         response[0]["price"]
             .as_str()
-            .ok_or(anyhow!("Failed to parse Kraken response"))?,
+            .ok_or(anyhow!("Failed to parse Binance response"))?,
     )?)
 }
 
