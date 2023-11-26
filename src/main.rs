@@ -98,19 +98,18 @@ async fn get_binance_price(pair: &str) -> Result<Decimal> {
     )?)
 }
 
-async fn get_goldapi_price(apikey: &str, metal: &str, currency: &str) -> Result<Decimal> {
+async fn get_goldprice_price(metal: &str, currency: &str) -> Result<Decimal> {
     let response: JsonValue = CLIENT
-        .get(&format!("https://www.goldapi.io/api/{}/{}", metal, currency))
-        .header("x-access-token", apikey)
+        .get(&format!("https://data-asg.goldprice.org/dbXRates/{}", currency))
         .send()
         .await?
         .json()
         .await?;
-    Ok(response["price"]
+    Ok(response["items"][0][metal.to_ascii_lowercase() + "Price"]
         .as_f64()
         .and_then(Decimal::from_f64)
         .map(|d| d.round_dp(2))
-        .ok_or(anyhow!("Failed to parse GoldAPI response"))?)
+        .ok_or(anyhow!("Failed to parse GoldPrice response"))?)
 }
 
 fn median_price_string(data: &mut [Decimal]) -> String {
@@ -165,7 +164,7 @@ async fn get_eth_price(errors: &mut Vec<String>) -> String {
 async fn get_gold_price(state: &State, errors: &mut Vec<String>) -> String {
     let (gold1, gold2, gold3) = join!(
         get_coinbase_price("XAU-USD"),
-        get_goldapi_price(&state.goldapi_apikey, "XAU", "USD"),
+        get_goldprice_price("XAU", "USD"),
         yfi_get(&state.yfi, "GC=F"),
     );
     let gold3 = gold3.and_then(|(price, _)| Decimal::from_str(&price).map_err(anyhow::Error::from));
@@ -182,7 +181,6 @@ async fn get_gold_price(state: &State, errors: &mut Vec<String>) -> String {
 struct State {
     api: Api,
     yfi: yahoo_finance_api::YahooConnector,
-    goldapi_apikey: String,
     last_update: SystemTime,
     btc: String,
     eth: String,
@@ -204,7 +202,7 @@ async fn yfi_get(
     let quotes = if symbol.ends_with("-USD") {
         yfi.get_quote_range(symbol, "1h", "3d")
     } else {
-        yfi.get_quote_range(symbol, "1d", "2d")
+        yfi.get_quote_range(symbol, "1d", "3d")
     }
     .await?
     .quotes()?
@@ -371,12 +369,10 @@ async fn handle_update(state: &mut State, update: Update) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let token = env::var("IREINA_TOKEN")?;
-    let goldapi_apikey = env::var("GOLDAPI_APIKEY")?;
 
     let mut state = State {
         api: Api::new(token),
         yfi: YahooConnector::new(),
-        goldapi_apikey,
         last_update: SystemTime::UNIX_EPOCH,
         btc: String::new(),
         eth: String::new(),
