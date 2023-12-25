@@ -1,422 +1,209 @@
-use anyhow::{anyhow, Result};
-use futures::join;
-use futures::StreamExt;
-use once_cell::sync::Lazy;
+mod datasources;
+
+use anyhow::Result;
+use datasources::Aggregator;
+use datasources::BinanceTickerDataSource;
+use datasources::CoinbaseTickerDataSource;
+use datasources::GoldpriceTickerDataSource;
+use datasources::KrakenTickerDataSource;
+use datasources::TickerData;
+use datasources::YahooFinanceTickerDataSource;
+use env_logger::Env;
+use futures::future::join_all;
+use log::error;
 use reqwest::Client;
 use rust_decimal::prelude::*;
-use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
+use teloxide::Bot;
+use teloxide::dispatching::Dispatcher;
+use teloxide::dispatching::HandlerExt;
+use teloxide::dispatching::UpdateFilterExt;
+use teloxide::dptree;
+use teloxide::macros::BotCommands;
+use teloxide::payloads::SendMessageSetters;
+use teloxide::requests::Request;
+use teloxide::requests::Requester;
+use teloxide::types::InlineQuery;
+use teloxide::types::InlineQueryResult;
+use teloxide::types::InlineQueryResultArticle;
+use teloxide::types::InputMessageContent;
+use teloxide::types::InputMessageContentText;
+use teloxide::types::Message;
+use teloxide::types::Update;
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
-use std::time::SystemTime;
-use telegram_bot::*;
-use tokio_compat_02::FutureExt;
 use yahoo_finance_api;
 use yahoo_finance_api::YahooConnector;
 
-static CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .user_agent("ireina/0.1.0")
-        .timeout(Duration::from_secs(1))
-        .build()
-        .unwrap()
-});
+use datasources::TickerDataSource;
 
-async fn get_coinbase_price(pair: &str) -> Result<Decimal> {
-    let response: JsonValue = CLIENT
-        .get(&format!("https://api.coinbase.com/v2/prices/{}/spot", pair))
-        .send()
-        .await?
-        .json()
-        .await?;
-    if response["errors"] != JsonValue::Null {
-        return Err(anyhow!("Coinbase: {}", response["errors"][0]["message"]));
-    }
-    Ok(Decimal::from_str(
-        response["data"]["amount"]
-            .as_str()
-            .ok_or(anyhow!("Failed to parse Coinbase response"))?,
-    )?)
+struct DataSources {
+    btc: Box<dyn TickerDataSource + Sync>,
+    eth: Box<dyn TickerDataSource + Sync>,
+    sol: Box<dyn TickerDataSource + Sync>,
+    gspc: Box<dyn TickerDataSource + Sync>,
+    ixic: Box<dyn TickerDataSource + Sync>,
+    xau: Box<dyn TickerDataSource + Sync>,
 }
 
-async fn get_kraken_price(pair: &str) -> Result<Decimal> {
-    let response: JsonValue = CLIENT
-        .get(&format!(
-            "https://api.kraken.com/0/public/Ticker?pair={}",
-            pair
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    if response["error"][0] != JsonValue::Null {
-        return Err(anyhow!("Kraken: {}", response["error"][0]));
-    }
-    Ok(Decimal::from_str(
-        response["result"]
-            .as_object()
-            .and_then(|m| m.values().next())
-            .and_then(|p| p["c"][0].as_str())
-            .ok_or(anyhow!("Failed to parse Kraken response"))?,
-    )?)
+struct QueryState {
+    tickers: Vec<(String, String, String, bool)>,
+    errors: Vec<String>
 }
 
-async fn get_gemini_price(pair: &str) -> Result<Decimal> {
-    let response: JsonValue = CLIENT
-        .get(&format!("https://api.gemini.com/v1/pubticker/{}", pair))
-        .send()
-        .await?
-        .json()
-        .await?;
-    if response["result"].as_str() == Some("error") {
-        return Err(anyhow!("Gemini: {}", response["message"]));
-    }
-    Ok(Decimal::from_str(
-        response["last"]
-            .as_str()
-            .ok_or(anyhow!("Failed to parse Gemini response"))?,
-    )?)
-}
+impl DataSources {
+    async fn query_all(&self) -> QueryState {
+        let results = join_all([
+                self.btc.get_ticker_data(),
+                self.eth.get_ticker_data(),
+                self.sol.get_ticker_data(),
+                self.gspc.get_ticker_data(),
+                self.ixic.get_ticker_data(),
+                self.xau.get_ticker_data(),
+                ]).await;
+        let tickers = results.iter().zip(["BTC", "ETH", "SOL", "GSPC", "IXIC", "XAU"]).map(|(ticker_data, ticker)| {
+            let change = {
+                if let TickerData { last_price: Some(last), prev_price: Some(prev), .. } = ticker_data {
+                    format!("{:>+.2}%", ((last / prev).to_f64().unwrap() - 1.) * 100.)
+                } else {
+                    "N/A".to_owned()
+                }
+            };
+            let price = ticker_data.last_price.map(|price| format!("{:>.2}", price)).unwrap_or("N/A".to_owned());
+            (ticker.to_owned(), price, change, ticker_data.insufficient_data)
+        }).collect();
+        let errors = results.into_iter().flat_map(|t| t.errors).collect();
 
-async fn get_binance_price(pair: &str) -> Result<Decimal> {
-    let response: JsonValue = CLIENT
-        .get(&format!(
-            "https://api.binance.com/api/v3/trades?symbol={}&limit=1",
-            pair
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    if response["code"].is_i64() {
-        return Err(anyhow!("Binance: {}", response["msg"]));
-    }
-    Ok(Decimal::from_str(
-        response[0]["price"]
-            .as_str()
-            .ok_or(anyhow!("Failed to parse Binance response"))?,
-    )?)
-}
-
-async fn get_goldprice_price(metal: &str, currency: &str) -> Result<Decimal> {
-    let response: JsonValue = CLIENT
-        .get(&format!("https://data-asg.goldprice.org/dbXRates/{}", currency))
-        .send()
-        .await?
-        .json()
-        .await?;
-    Ok(response["items"][0][metal.to_ascii_lowercase() + "Price"]
-        .as_f64()
-        .and_then(Decimal::from_f64)
-        .map(|d| d.round_dp(2))
-        .ok_or(anyhow!("Failed to parse GoldPrice response"))?)
-}
-
-fn median_price_string(data: &mut [Decimal]) -> String {
-    data.sort();
-    let size = data.len();
-    if size == 0 {
-        return "ERROR".to_owned();
-    }
-    (if size % 2 == 0 {
-        (data[size / 2 - 1] + data[size / 2]) / Decimal::from_i32(2).unwrap()
-    } else {
-        data[size / 2]
-    })
-    .round_dp_with_strategy(2, RoundingStrategy::MidpointNearestEven)
-    .to_string()
-}
-
-async fn get_btc_price(errors: &mut Vec<String>) -> String {
-    let (btc1, btc2, btc3, btc4) = join!(
-        get_coinbase_price("BTC-USD"),
-        get_kraken_price("BTCUSD"),
-        get_gemini_price("BTCUSD"),
-        get_binance_price("BTCUSDT"),
-    );
-    let mut prices = vec![];
-    for b in [btc1, btc2, btc3, btc4].iter() {
-        match b {
-            Ok(price) => prices.push(price.clone()),
-            Err(e) => errors.push(e.to_string()),
-        }
-    }
-    median_price_string(&mut prices)
-}
-
-async fn get_eth_price(errors: &mut Vec<String>) -> String {
-    let (eth1, eth2, eth3, eth4) = join!(
-        get_coinbase_price("ETH-USD"),
-        get_kraken_price("ETHUSD"),
-        get_gemini_price("ETHUSD"),
-        get_binance_price("ETHUSDT"),
-    );
-    let mut prices = vec![];
-    for b in [eth1, eth2, eth3, eth4].iter() {
-        match b {
-            Ok(price) => prices.push(price.clone()),
-            Err(e) => errors.push(e.to_string()),
-        }
-    }
-    median_price_string(&mut prices)
-}
-
-async fn get_gold_price(state: &State, errors: &mut Vec<String>) -> String {
-    let (gold1, gold2, gold3) = join!(
-        get_coinbase_price("XAU-USD"),
-        get_goldprice_price("XAU", "USD"),
-        yfi_get(&state.yfi, "GC=F"),
-    );
-    let gold3 = gold3.and_then(|(price, _)| Decimal::from_str(&price).map_err(anyhow::Error::from));
-    let mut prices = vec![];
-    for b in [gold1, gold2, gold3].iter() {
-        match b {
-            Ok(price) => prices.push(price.clone()),
-            Err(e) => errors.push(e.to_string()),
-        }
-    }
-    median_price_string(&mut prices)
-}
-
-struct State {
-    api: Api,
-    yfi: yahoo_finance_api::YahooConnector,
-    last_update: SystemTime,
-    btc: String,
-    eth: String,
-    xau: String,
-    gspc: String,
-    ixic: String,
-    btc6h: String,
-    eth6h: String,
-    xau6h: String,
-    gspc6h: String,
-    ixic6h: String,
-    query_responses: BTreeMap<MessageChat, (MessageId, MessageId)>,
-}
-
-async fn yfi_get(
-    yfi: &yahoo_finance_api::YahooConnector,
-    symbol: &str,
-) -> Result<(String, String)> {
-    let quotes = if symbol.ends_with("-USD") {
-        yfi.get_quote_range(symbol, "1h", "3d")
-    } else {
-        yfi.get_quote_range(symbol, "1d", "3d")
-    }
-    .await?
-    .quotes()?
-    .into_iter()
-    .rev()
-    .collect::<Vec<_>>();
-    let prev_price = if symbol.ends_with("-USD") {
-        if quotes.len() >= 25 {
-            quotes[24].close
-        } else {
-            0.
-        }
-    } else {
-        if quotes.len() >= 2 {
-            quotes[1].adjclose
-        } else {
-            0.
-        }
-    };
-    if quotes.len() == 0 {
-        Ok(("N/A".to_owned(), "N/A".to_owned()))
-    } else if prev_price == 0. {
-        Ok((format!("{:.2}", quotes[0].close), "N/A".to_owned()))
-    } else {
-        let change = if symbol.ends_with("-USD") {
-            (quotes[0].close / prev_price - 1.) * 100.
-        } else {
-            (quotes[0].adjclose / prev_price - 1.) * 100.
-        };
-        Ok((
-            format!("{:.2}", quotes[0].close),
-            format!("{:>+.2}%", change),
-        ))
+        QueryState { tickers, errors }
     }
 }
 
-async fn yfi_get_wrapped(
-    yfi: &yahoo_finance_api::YahooConnector,
-    symbol: &str,
-    errors: &mut Vec<String>,
-) -> (String, String) {
-    yfi_get(yfi, symbol).await.unwrap_or_else(|err| {
-        errors.push(err.to_string());
-        ("ERROR".to_owned(), String::new())
-    })
-}
-
-async fn update_state(state: &mut State, errors: &mut Vec<String>) {
-    state.btc = get_btc_price(errors).await;
-    state.eth = get_eth_price(errors).await;
-    state.xau = get_gold_price(&*state, errors).await;
-
-    let (_, btc6h) = yfi_get_wrapped(&state.yfi, "BTC-USD", errors).await;
-    state.btc6h = btc6h;
-    let (_, eth6h) = yfi_get_wrapped(&state.yfi, "ETH-USD", errors).await;
-    state.eth6h = eth6h;
-    let (_, xau6h) = yfi_get_wrapped(&state.yfi, "GC=F", errors).await;
-    state.xau6h = xau6h;
-
-    let (gspc, gspc6h) = yfi_get_wrapped(&state.yfi, "^GSPC", errors).await;
-    state.gspc = gspc;
-    state.gspc6h = gspc6h;
-    let (ixic, ixic6h) = yfi_get_wrapped(&state.yfi, "^IXIC", errors).await;
-    state.ixic = ixic;
-    state.ixic6h = ixic6h;
-
-    state.last_update = SystemTime::now();
-}
-
-async fn gen_message(state: &mut State) -> Result<String> {
-    let mut errors = vec![];
-    if state.last_update.elapsed()? > Duration::from_secs(3) {
-        update_state(state, &mut errors).await;
-    }
-    let errmsg = if errors.is_empty() {
+async fn gen_message(state: &QueryState) -> Result<String> {
+    let errmsg = if state.errors.is_empty() {
         String::new()
     } else {
         format!(
             "\nError happened while fetching prices:\n{}",
-            errors.join("\n")
+            state.errors.join("\n")
         )
     };
-    let width = [&state.btc, &state.eth, &state.gspc, &state.ixic, &state.xau]
-        .iter()
-        .map(|s| s.len())
+    let width_ticker = state.tickers.iter()
+        .map(|s| s.0.len())
+        .max()
+        .unwrap_or(4);
+    let width_price = state.tickers.iter()
+        .map(|s| s.1.len())
         .max()
         .unwrap_or(8);
-    let width2 = [
-        &state.btc6h,
-        &state.eth6h,
-        &state.gspc6h,
-        &state.ixic6h,
-        &state.xau6h,
-    ]
-    .iter()
-    .map(|s| s.len())
-    .max()
-    .unwrap_or(8);
-    Ok(format!(
-        "```\n\
-        BTC  {:>width$} {:>width2$}\n\
-        ETH  {:>width$} {:>width2$}\n\
-        \n\
-        GSPC {:>width$} {:>width2$}\n\
-        IXIC {:>width$} {:>width2$}\n\
-        XAU  {:>width$} {:>width2$}\n\
-        ```{}",
-        state.btc,
-        state.btc6h,
-        state.eth,
-        state.eth6h,
-        state.gspc,
-        state.gspc6h,
-        state.ixic,
-        state.ixic6h,
-        state.xau,
-        state.xau6h,
-        errmsg,
-        width = width,
-        width2 = width2,
-    ))
+    let width_change = state.tickers.iter()
+        .map(|s| s.2.len())
+        .max()
+        .unwrap_or(8);
+    let output = state.tickers.iter().map(|(ticker, price, change, insufficient)| {
+        format!("{:<width_ticker$} {:>width_price$} {:>width_change$}", ticker, price, change) + if *insufficient { " *" } else { "" }
+    }).collect::<Vec<_>>().join("\n");
+    Ok(format!("```\n{}```{}", output, errmsg))
 }
 
-async fn handle_update(state: &mut State, update: Update) -> Result<()> {
-    if let UpdateKind::Message(message) = update.kind {
-        if let MessageKind::Text { ref data, .. } = message.kind {
-            if data.starts_with("/query") {
-                let msgstr = gen_message(state).await?;
-                let msg_resp = state
-                    .api
-                    .send(SendMessage::new(&message.chat, msgstr).parse_mode(ParseMode::Markdown).reply_to(message.id))
-                    .compat()
-                    .await?;
-                if let Some((last_resp_id, last_query_id)) = state.query_responses.get(&message.chat) {
-                    let _ = state.api.send(DeleteMessage::new(&message.chat, last_resp_id)).await;
-                    let _ = state.api.send(DeleteMessage::new(&message.chat, last_query_id)).await;
-                }
-                if let MessageOrChannelPost::Message(resp_message) = msg_resp {
-                    state.query_responses.insert(message.chat, (resp_message.id, message.id));
-                }
-            }
-        }
-    } else if let UpdateKind::InlineQuery(query) = update.kind {
-        let msgstr = gen_message(state).await?;
-        let answer = AnswerInlineQueryTimeout {
-            inline_query_id: query.id,
-            results: vec![InlineQueryResultArticle::new(
-                "price",
-                "Coin Prices",
-                InputTextMessageContent {
-                    message_text: msgstr,
-                    parse_mode: Some(ParseMode::Markdown),
-                    disable_web_page_preview: true,
-                },
-            )
-            .into()],
-            cache_time: 5,
-        };
-        state.api.send(answer).compat().await?;
-    }
-    Ok(())
+async fn get_update(data_sources: &DataSources) -> Result<String> {
+    let query_result = data_sources.query_all().await;
+    let msgstr = gen_message(&query_result).await?;
+    Ok(msgstr)
 }
+
+#[derive(BotCommands, Clone)]
+#[command(rename_rule = "lowercase")]
+enum Command {
+    #[command(description = "query coin price")]
+    Query,
+}
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let token = env::var("IREINA_TOKEN")?;
+    let bot = Bot::new(token);
 
-    let mut state = State {
-        api: Api::new(token),
-        yfi: YahooConnector::new(),
-        last_update: SystemTime::UNIX_EPOCH,
-        btc: String::new(),
-        eth: String::new(),
-        xau: String::new(),
-        gspc: String::new(),
-        ixic: String::new(),
-        btc6h: String::new(),
-        eth6h: String::new(),
-        xau6h: String::new(),
-        gspc6h: String::new(),
-        ixic6h: String::new(),
-        query_responses: BTreeMap::new(),
+    let http_client = Arc::new(Client::builder()
+        .user_agent("ireina/0.1.0")
+        .timeout(Duration::from_secs(1))
+        .build()
+        .unwrap());
+
+    let yfi = Arc::new(YahooConnector::new());
+
+    let data_sources = DataSources {
+        btc: Box::new(Aggregator::new(vec![
+            Box::new(BinanceTickerDataSource::new(http_client.clone(), "BTCUSDT".to_string())),
+            Box::new(CoinbaseTickerDataSource::new(http_client.clone(), "BTC-USD".to_string())),
+            Box::new(KrakenTickerDataSource::new(http_client.clone(), "XXBTZUSD".to_string())),
+        ])),
+        eth: Box::new(Aggregator::new(vec![
+            Box::new(BinanceTickerDataSource::new(http_client.clone(), "ETHUSDT".to_string())),
+            Box::new(CoinbaseTickerDataSource::new(http_client.clone(), "ETH-USD".to_string())),
+            Box::new(KrakenTickerDataSource::new(http_client.clone(), "XETHZUSD".to_string())),
+        ])),
+        sol: Box::new(Aggregator::new(vec![
+            Box::new(BinanceTickerDataSource::new(http_client.clone(), "SOLUSDT".to_string())),
+            Box::new(CoinbaseTickerDataSource::new(http_client.clone(), "SOL-USD".to_string())),
+            Box::new(KrakenTickerDataSource::new(http_client.clone(), "SOLUSD".to_string())),
+        ])),
+        gspc: Box::new(YahooFinanceTickerDataSource::new(yfi.clone(), "^GSPC".to_string())),
+        ixic: Box::new(YahooFinanceTickerDataSource::new(yfi.clone(), "^IXIC".to_string())),
+        xau: Box::new(Aggregator::new(vec![
+            Box::new(YahooFinanceTickerDataSource::new(yfi.clone(), "GC=F".to_string())),
+            Box::new(GoldpriceTickerDataSource::new(http_client.clone(), "XAU".to_string(), "USD".to_string())),
+        ])),
     };
 
-    let mut stream = state.api.stream();
-    stream.allowed_updates(&[AllowedUpdate::Message, AllowedUpdate::InlineQuery]);
-    while let Some(update) = stream.next().compat().await {
-        let update = match update {
-            Ok(u) => u,
-            Err(e) => {
-                eprintln!("{}", e);
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
-            }
-        };
-        if let Err(e) = handle_update(&mut state, update).await {
-            eprintln!("{}", e);
+    let handler = dptree::entry()
+        .branch(
+            Update::filter_message()
+                .filter_command::<Command>()
+                .endpoint(command_handler)
+        )
+        .branch(
+            Update::filter_inline_query().endpoint(inline_query_handler)
+        );
+
+    Dispatcher::builder(bot, handler)
+        .enable_ctrlc_handler()
+        .dependencies(dptree::deps![Arc::new(data_sources)])
+        .build().dispatch().await;
+    Ok(())
+}
+
+async fn command_handler(bot: Bot, msg: Message, cmd: Command, data_sources: Arc<DataSources>) -> Result<()> {
+    let update = match get_update(&data_sources).await {
+        Ok(update) => update,
+        Err(e) => {
+            error!("get_update: {}", e);
+            return Ok(())
         }
+    };
+    let resp = match cmd {
+        Command::Query => bot.send_message(msg.chat.id, update).reply_to_message_id(msg.id).parse_mode(teloxide::types::ParseMode::Markdown).await,
+    };
+    if let Err(ref e) = resp {
+        error!("handle command: {}", e);
     }
     Ok(())
 }
 
-#[derive(serde::Serialize, Debug)]
-pub struct AnswerInlineQueryTimeout {
-    inline_query_id: InlineQueryId,
-    results: Vec<InlineQueryResult>,
-    cache_time: i32,
-}
-
-impl Request for AnswerInlineQueryTimeout {
-    type Type = JsonRequestType<Self>;
-    type Response = JsonTrueToUnitResponse;
-
-    fn serialize(&self) -> Result<HttpRequest, telegram_bot::types::Error> {
-        Self::Type::serialize(RequestUrl::method("answerInlineQuery"), self)
+async fn inline_query_handler(bot: Bot, q: InlineQuery, data_sources: Arc<DataSources>) -> Result<()> {
+    let update = match get_update(&data_sources).await {
+        Ok(update) => update,
+        Err(e) => {
+            error!("get_update: {}", e);
+            return Ok(())
+        }
+    };
+    let resp = bot.answer_inline_query(&q.id, vec![
+        InlineQueryResult::Article(InlineQueryResultArticle::new("price", "Coin Prices", InputMessageContent::Text(InputMessageContentText::new(update).parse_mode(teloxide::types::ParseMode::Markdown)))),
+    ]).send().await;
+    if let Err(ref e) = resp {
+        error!("handle command: {}", e);
     }
+    Ok(())
 }
