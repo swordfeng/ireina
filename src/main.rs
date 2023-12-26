@@ -11,6 +11,7 @@ use datasources::YahooFinanceTickerDataSource;
 use env_logger::Env;
 use futures::future::join_all;
 use log::error;
+use log::warn;
 use reqwest::Client;
 use rust_decimal::prelude::*;
 use teloxide::Bot;
@@ -82,6 +83,7 @@ async fn gen_message(state: &QueryState) -> Result<String> {
     let errmsg = if state.errors.is_empty() {
         String::new()
     } else {
+        warn!("{}", state.errors.join("\n"));
         format!(
             "\nError happened while fetching prices:\n{}",
             state.errors.join("\n")
