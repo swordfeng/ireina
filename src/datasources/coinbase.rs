@@ -48,44 +48,6 @@ impl CoinbaseTickerDataSource {
         )?;
         Ok((last, open))
     }
-
-    // async fn query_price(&self) -> Result<Decimal> {
-    //     let response: JsonValue = self.client
-    //         .get(&format!("https://api.exchange.coinbase.com/products/{}/ticker", &self.ticker))
-    //         .send()
-    //         .await?
-    //         .json()
-    //         .await?;
-    //     if response["message"] != JsonValue::Null {
-    //         return Err(anyhow!("Coinbase: {}", response["message"]));
-    //     }
-    //     let price = Decimal::from_str(
-    //         response["price"]
-    //             .as_str()
-    //             .ok_or(anyhow!("Failed to parse Coinbase ticker response"))?,
-    //     )?;
-    //     Ok(price)
-    // }
-
-    // async fn query_6hr(&self) -> Result<Decimal> {
-    //     let now_ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    //     let prev_ts = now_ts - 6 * 3600;
-    //     let response: JsonValue = self.client
-    //         .get(&format!("https://api.exchange.coinbase.com/products/{}/candles?granularity=60&start={}&end={}", &self.ticker, prev_ts - 60, prev_ts))
-    //         .send()
-    //         .await?
-    //         .json()
-    //         .await?;
-    //     if response["message"] != JsonValue::Null {
-    //         return Err(anyhow!("Coinbase: {}", response["errors"][0]["message"]));
-    //     }
-    //     let prev = Decimal::from_str(
-    //         response[0][4]  // [timestamp, price_low, price_high, price_open, price_close]
-    //             .as_str()
-    //             .ok_or(anyhow!("Failed to parse Coinbase candle response"))?,
-    //     )?;
-    //     Ok(prev)
-    // }
 }
 
 #[async_trait]

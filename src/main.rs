@@ -1,6 +1,8 @@
 mod datasources;
+mod coinbase_monitor;
 
 use anyhow::Result;
+use coinbase_monitor::CoinbaseMonitor;
 use datasources::Aggregator;
 use datasources::BinanceTickerDataSource;
 use datasources::CoinbaseTickerDataSource;
@@ -118,6 +120,8 @@ async fn get_update(data_sources: &DataSources) -> Result<String> {
 enum Command {
     #[command(description = "query coin price")]
     Query,
+    #[command(description = "query coinbase product")]
+    CbStatus(String),
 }
 
 
@@ -159,6 +163,8 @@ async fn main() -> Result<()> {
         ])),
     };
 
+    let cb_monitor = Arc::new(CoinbaseMonitor::new(http_client.clone()));
+
     let handler = dptree::entry()
         .branch(
             Update::filter_message()
@@ -169,23 +175,41 @@ async fn main() -> Result<()> {
             Update::filter_inline_query().endpoint(inline_query_handler)
         );
 
-    Dispatcher::builder(bot, handler)
+    let cb_monitor_clone = cb_monitor.clone();
+    let bot_task = tokio::spawn(async move {
+        Dispatcher::builder(bot, handler)
         .enable_ctrlc_handler()
-        .dependencies(dptree::deps![Arc::new(data_sources)])
+        .dependencies(dptree::deps![Arc::new(data_sources), cb_monitor_clone])
         .build().dispatch().await;
+    });
+
+    let cb_task = tokio::spawn(async move {
+        cb_monitor.monitor().await;
+    });
+
+    bot_task.await?;
     Ok(())
 }
 
-async fn command_handler(bot: Bot, msg: Message, cmd: Command, data_sources: Arc<DataSources>) -> Result<()> {
-    let update = match get_update(&data_sources).await {
-        Ok(update) => update,
-        Err(e) => {
-            error!("get_update: {}", e);
-            return Ok(())
-        }
-    };
+async fn command_handler(bot: Bot, msg: Message, cmd: Command, data_sources: Arc<DataSources>, cb_monitor: Arc<CoinbaseMonitor>) -> Result<()> {
     let resp = match cmd {
-        Command::Query => bot.send_message(msg.chat.id, update).reply_to_message_id(msg.id).parse_mode(teloxide::types::ParseMode::Markdown).await,
+        Command::Query => {
+            let update = match get_update(&data_sources).await {
+                Ok(update) => update,
+                Err(e) => {
+                    error!("get_update: {}", e);
+                    return Ok(())
+                }
+            };
+            bot.send_message(msg.chat.id, update).reply_to_message_id(msg.id).parse_mode(teloxide::types::ParseMode::Markdown).await
+        },
+        Command::CbStatus(ticker) => {
+            let status = match cb_monitor.query(&ticker).await {
+                Some(value) => value.to_string(),
+                None => "Not found".to_owned(),
+            };
+            bot.send_message(msg.chat.id, status).reply_to_message_id(msg.id).await
+        }
     };
     if let Err(ref e) = resp {
         error!("handle command: {}", e);
