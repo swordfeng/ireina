@@ -173,7 +173,8 @@ async fn main() -> Result<()> {
         )
         .branch(
             Update::filter_inline_query().endpoint(inline_query_handler)
-        );
+        )
+        .endpoint(ignore_handler);  // ignore the rest
 
     let cb_monitor_clone = cb_monitor.clone();
     let bot_task = tokio::spawn(async move {
@@ -231,5 +232,9 @@ async fn inline_query_handler(bot: Bot, q: InlineQuery, data_sources: Arc<DataSo
     if let Err(ref e) = resp {
         error!("handle command: {}", e);
     }
+    Ok(())
+}
+
+async fn ignore_handler() -> Result<()> {
     Ok(())
 }
