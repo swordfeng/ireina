@@ -63,8 +63,6 @@ impl CoinbaseMonitor {
     pub async fn query_cmp(&self) -> Option<String> {
         let data = self.data.lock().await;
         if let (Some((stime, sproducts)), Some((etime, eproducts))) = (data.first(), data.last()) {
-            let mut sproducts = sproducts.clone();
-            sproducts.remove("BTC-USD");
             JsonDiff::diff_string(
                 &serde_json::to_value(sproducts).unwrap(),
                 &serde_json::to_value(eproducts).unwrap(),
