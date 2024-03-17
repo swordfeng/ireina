@@ -1,18 +1,16 @@
 use async_trait::async_trait;
 use futures::future::join_all;
-use rust_decimal::{Decimal, prelude::FromPrimitive};
+use rust_decimal::{prelude::FromPrimitive, Decimal};
 
-use super::datasource::{TickerDataSource, TickerData};
+use super::datasource::{TickerData, TickerDataSource};
 
 pub struct Aggregator {
-    sources: Vec<Box<dyn TickerDataSource + Sync>>
+    sources: Vec<Box<dyn TickerDataSource + Sync>>,
 }
 
 impl Aggregator {
     pub fn new(sources: Vec<Box<dyn TickerDataSource + Sync>>) -> Aggregator {
-        Aggregator {
-            sources,
-        }
+        Aggregator { sources }
     }
 }
 
@@ -25,8 +23,12 @@ impl TickerDataSource for Aggregator {
         TickerData {
             last_price: median(last_price_vec.iter().cloned()),
             prev_price: median(prev_price_vec.iter().cloned()),
-            insufficient_data: self.sources.len() == 0 || (last_price_vec.len() < self.sources.len() && last_price_vec.len() < 3),
-            errors: prices.iter().flat_map(|t| t.errors.iter().cloned()).collect()
+            insufficient_data: self.sources.len() == 0
+                || (last_price_vec.len() < self.sources.len() && last_price_vec.len() < 3),
+            errors: prices
+                .iter()
+                .flat_map(|t| t.errors.iter().cloned())
+                .collect(),
         }
     }
 }
@@ -36,7 +38,7 @@ fn median(data: impl Iterator<Item = Decimal>) -> Option<Decimal> {
     data.sort();
     let size = data.len();
     if size == 0 {
-        return None
+        return None;
     }
     Some(if size % 2 == 0 {
         (data[size / 2 - 1] + data[size / 2]) / Decimal::from_i32(2).unwrap()

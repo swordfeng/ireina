@@ -313,6 +313,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "difflib"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
+
+[[package]]
 name = "dptree"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -724,7 +730,9 @@ dependencies = [
  "async-trait",
  "env_logger",
  "futures",
+ "json-structural-diff",
  "log",
+ "pretty-duration",
  "reqwest",
  "rust_decimal",
  "serde",
@@ -768,6 +776,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54c0c35952f67de54bb584e9fd912b3023117cbafc0a77d8f3dee1fb5f572fe8"
 dependencies = [
  "wasm-bindgen",
+]
+
+[[package]]
+name = "json-structural-diff"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25c7940d3c84d2079306c176c7b2b37622b6bc5e43fbd1541b1e4a4e1fd02045"
+dependencies = [
+ "difflib",
+ "regex",
+ "serde_json",
 ]
 
 [[package]]
@@ -1114,6 +1133,12 @@ name = "precomputed-hash"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
+
+[[package]]
+name = "pretty-duration"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8868e7264af614b3634ff0abbe37b178e61000611b8a75221aea40221924aba"
 
 [[package]]
 name = "proc-macro-crate"

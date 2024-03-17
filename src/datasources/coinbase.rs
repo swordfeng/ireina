@@ -1,4 +1,8 @@
-use std::{time::{Duration, Instant}, str::FromStr, sync::Arc};
+use std::{
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -9,7 +13,6 @@ use serde_json::Value as JsonValue;
 use tokio::sync::Mutex;
 
 use super::datasource::{TickerData, TickerDataSource};
-
 
 pub struct CoinbaseTickerDataSource {
     client: Arc<Client>,
@@ -27,8 +30,12 @@ impl CoinbaseTickerDataSource {
     }
 
     async fn run_query(&self) -> Result<(Decimal, Decimal)> {
-        let resp_payload = self.client
-            .get(&format!("https://api.exchange.coinbase.com/products/{}/stats", &self.ticker))
+        let resp_payload = self
+            .client
+            .get(&format!(
+                "https://api.exchange.coinbase.com/products/{}/stats",
+                &self.ticker
+            ))
             .send()
             .await?;
         let response: JsonValue = resp_payload.json().await?;
@@ -56,7 +63,7 @@ impl TickerDataSource for CoinbaseTickerDataSource {
         let mut last_check_res = self.last_check_res.lock().await;
         if let Some((ref time, ref ticker_data)) = *last_check_res {
             if time.elapsed() < Duration::from_secs(5) {
-                return ticker_data.clone()
+                return ticker_data.clone();
             }
         }
         match self.run_query().await {
@@ -69,13 +76,13 @@ impl TickerDataSource for CoinbaseTickerDataSource {
                 };
                 *last_check_res = Some((Instant::now(), ticker_data.clone()));
                 ticker_data
-            },
+            }
             Err(e) => TickerData {
                 last_price: None,
                 prev_price: None,
                 insufficient_data: true,
-                errors: vec![e.to_string()]
-            }
+                errors: vec![e.to_string()],
+            },
         }
     }
 }
