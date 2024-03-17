@@ -39,7 +39,6 @@ impl CoinbaseMonitor {
                         .filter_map(|p| serde_json::from_value(p).ok())
                         .map(|p: Product| (p.id.clone(), p))
                         .collect::<BTreeMap<_, _>>();
-                    info!("{:?}", &products);
                     let mut data = self.data.lock().await;
                     let mut updated = data
                         .iter()
