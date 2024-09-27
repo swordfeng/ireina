@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
             .unwrap(),
     );
 
-    let yfi = Arc::new(YahooConnector::new());
+    let yfi = Arc::new(YahooConnector::new()?);
 
     let data_sources = DataSources {
         btc: Box::new(Aggregator::new(vec![
