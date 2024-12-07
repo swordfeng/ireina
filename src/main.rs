@@ -15,7 +15,12 @@ use futures::future::join_all;
 use log::error;
 use log::warn;
 use reqwest::Client;
+use reqwest::Url;
 use rust_decimal::prelude::*;
+use teloxide::types::InlineKeyboardButton;
+use teloxide::types::ReplyMarkup;
+use teloxide::types::WebAppInfo;
+use std::convert::TryInto as _;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -272,10 +277,12 @@ async fn command_handler(
                 .await
                 .map(|s| format!("\n**Coinbase Listing Change:**\n```\n{}\n```", s))
                 .unwrap_or_default();
-            warn!("{}", &cbcmp);
             bot.send_message(msg.chat.id, update + &cbcmp)
                 .reply_to_message_id(msg.id)
                 .parse_mode(teloxide::types::ParseMode::Markdown)
+                .reply_markup(ReplyMarkup::inline_kb([
+                    [InlineKeyboardButton::web_app("Gift Dev!", WebAppInfo { url: "https://taiho.moe/ireina-gifting".try_into()? })]
+                    ]))
                 .await
         }
         Command::CbStatus(ticker) => {
