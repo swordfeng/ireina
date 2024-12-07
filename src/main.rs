@@ -281,14 +281,10 @@ async fn command_handler(
             bot.send_message(msg.chat.id, update + &cbcmp)
                 .reply_parameters(ReplyParameters::new(msg.id))
                 .parse_mode(teloxide::types::ParseMode::Markdown)
-                .reply_markup(InlineKeyboardMarkup::new([[
-                    InlineKeyboardButton::web_app(
-                        "Gift Dev!",
-                        WebAppInfo {
-                            url: "https://taiho.moe/ireina-gifting".try_into().unwrap(),
-                        },
-                    ),
-                ]]))
+                .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::url(
+                    "Gift Dev!",
+                    "https://taiho.moe/ireina-gifting".try_into().unwrap(),
+                )]]))
                 .await
         }
         Command::CbStatus(ticker) => {
@@ -330,6 +326,10 @@ async fn inline_query_handler(
                         .parse_mode(teloxide::types::ParseMode::Markdown),
                 ),
             )
+            .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::url(
+                "Gift Dev!",
+                "https://taiho.moe/ireina-gifting".try_into().unwrap(),
+            )]]))
             .into()],
         )
         .button(InlineQueryResultsButton {
