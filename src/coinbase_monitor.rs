@@ -26,7 +26,7 @@ impl CoinbaseMonitor {
         }
     }
 
-    pub async fn monitor(&self) -> () {
+    pub async fn monitor(&self) {
         loop {
             let now = SystemTime::now();
             match self.query_products().await {
@@ -34,7 +34,7 @@ impl CoinbaseMonitor {
                     let products = products
                         .as_array()
                         .unwrap()
-                        .into_iter()
+                        .iter()
                         .cloned()
                         .filter_map(|p| serde_json::from_value(p).ok())
                         .map(|p: Product| (p.id.clone(), p))
@@ -92,7 +92,7 @@ impl CoinbaseMonitor {
         info!("Querying Coinbase products");
         let resp_payload = self
             .client
-            .get(&format!("https://api.exchange.coinbase.com/products"))
+            .get("https://api.exchange.coinbase.com/products".to_string())
             .send()
             .await?;
         let response: JsonValue = resp_payload.json().await?;

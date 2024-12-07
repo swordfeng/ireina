@@ -23,7 +23,7 @@ impl TickerDataSource for Aggregator {
         TickerData {
             last_price: median(last_price_vec.iter().cloned()),
             prev_price: median(prev_price_vec.iter().cloned()),
-            insufficient_data: self.sources.len() == 0
+            insufficient_data: self.sources.is_empty()
                 || (last_price_vec.len() < self.sources.len() && last_price_vec.len() < 3),
             errors: prices
                 .iter()

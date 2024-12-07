@@ -43,7 +43,7 @@ impl YahooFinanceTickerDataSource {
         } else {
             0.
         };
-        if quotes.len() == 0 {
+        if quotes.is_empty() {
             Ok((None, None))
         } else if prev_price == 0. {
             let last = Decimal::from_f64(quotes[0].close)

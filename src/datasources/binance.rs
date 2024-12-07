@@ -32,7 +32,7 @@ impl BinanceTickerDataSource {
     async fn run_query(&self) -> Result<(Decimal, Decimal)> {
         let resp_payload = self
             .client
-            .get(&format!(
+            .get(format!(
                 "https://api-gcp.binance.com/api/v3/ticker/24hr?symbol={}&type=MINI",
                 &self.ticker
             ))

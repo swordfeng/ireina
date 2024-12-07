@@ -32,7 +32,7 @@ impl KrakenTickerDataSource {
     async fn run_query(&self) -> Result<Decimal> {
         let response: JsonValue = self
             .client
-            .get(&format!(
+            .get(format!(
                 "https://api.kraken.com/0/public/Ticker?pair={}",
                 &self.ticker
             ))

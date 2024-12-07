@@ -33,7 +33,7 @@ impl GoldpriceTickerDataSource {
     async fn run_query(&self) -> Result<(Decimal, Decimal)> {
         let response: JsonValue = self
             .client
-            .get(&format!(
+            .get(format!(
                 "https://data-asg.goldprice.org/dbXRates/{}",
                 &self.currency
             ))
