@@ -18,9 +18,12 @@ yahoo_finance_api = "*"  # 2.2.1
 async-trait = "*"
 log = "0.4.20"
 env_logger = "*"
-teloxide = { version = "0.12", features = ["macros"] }
+teloxide = { version = "0.13", features = ["macros"] }
 json-structural-diff = "~0.1.0"
 pretty-duration = "~0.1.1"
+
+[patch.crates-io]
+teloxide = { git = "https://github.com/teloxide/teloxide.git", rev = "94db1757dc96116f4756a586fcbce3ac5ebd0c59" }
 
 [profile.release]
 lto = "thin"

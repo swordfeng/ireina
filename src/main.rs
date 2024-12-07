@@ -12,14 +12,12 @@ use datasources::TickerData;
 use datasources::YahooFinanceTickerDataSource;
 use env_logger::Env;
 use futures::future::join_all;
+use log::debug;
 use log::error;
 use log::warn;
 use reqwest::Client;
 use reqwest::Url;
 use rust_decimal::prelude::*;
-use teloxide::types::InlineKeyboardButton;
-use teloxide::types::ReplyMarkup;
-use teloxide::types::WebAppInfo;
 use std::convert::TryInto as _;
 use std::env;
 use std::sync::Arc;
@@ -29,16 +27,24 @@ use teloxide::dispatching::HandlerExt;
 use teloxide::dispatching::UpdateFilterExt;
 use teloxide::dptree;
 use teloxide::macros::BotCommands;
+use teloxide::payloads::AnswerInlineQuerySetters;
 use teloxide::payloads::SendMessageSetters;
 use teloxide::requests::Request;
 use teloxide::requests::Requester;
+use teloxide::types::InlineKeyboardButton;
+use teloxide::types::InlineKeyboardMarkup;
 use teloxide::types::InlineQuery;
 use teloxide::types::InlineQueryResult;
 use teloxide::types::InlineQueryResultArticle;
+use teloxide::types::InlineQueryResultsButton;
+use teloxide::types::InlineQueryResultsButtonKind;
 use teloxide::types::InputMessageContent;
 use teloxide::types::InputMessageContentText;
 use teloxide::types::Message;
+use teloxide::types::ReplyMarkup;
+use teloxide::types::ReplyParameters;
 use teloxide::types::Update;
+use teloxide::types::WebAppInfo;
 use teloxide::Bot;
 use yahoo_finance_api;
 use yahoo_finance_api::YahooConnector;
@@ -278,11 +284,16 @@ async fn command_handler(
                 .map(|s| format!("\n**Coinbase Listing Change:**\n```\n{}\n```", s))
                 .unwrap_or_default();
             bot.send_message(msg.chat.id, update + &cbcmp)
-                .reply_to_message_id(msg.id)
+                .reply_parameters(ReplyParameters::new(msg.id))
                 .parse_mode(teloxide::types::ParseMode::Markdown)
-                .reply_markup(ReplyMarkup::inline_kb([
-                    [InlineKeyboardButton::web_app("Gift Dev!", WebAppInfo { url: "https://taiho.moe/ireina-gifting".try_into()? })]
-                    ]))
+                .reply_markup(InlineKeyboardMarkup::new([[
+                    InlineKeyboardButton::web_app(
+                        "Gift Dev!",
+                        WebAppInfo {
+                            url: "https://taiho.moe/ireina-gifting".try_into().unwrap(),
+                        },
+                    ),
+                ]]))
                 .await
         }
         Command::CbStatus(ticker) => {
@@ -291,7 +302,7 @@ async fn command_handler(
                 None => "Not found".to_owned(),
             };
             bot.send_message(msg.chat.id, status)
-                .reply_to_message_id(msg.id)
+                .reply_parameters(ReplyParameters::new(msg.id))
                 .await
         }
     };
@@ -316,15 +327,22 @@ async fn inline_query_handler(
     let resp = bot
         .answer_inline_query(
             &q.id,
-            vec![InlineQueryResult::Article(InlineQueryResultArticle::new(
+            vec![InlineQueryResultArticle::new(
                 "price",
                 "Coin Prices",
                 InputMessageContent::Text(
                     InputMessageContentText::new(update)
                         .parse_mode(teloxide::types::ParseMode::Markdown),
                 ),
-            ))],
+            )
+            .into()],
         )
+        .button(InlineQueryResultsButton {
+            text: "Gift Dev!".to_owned(),
+            kind: InlineQueryResultsButtonKind::WebApp(WebAppInfo {
+                url: "https://taiho.moe/ireina-gifting".try_into().unwrap(),
+            }),
+        })
         .send()
         .await;
     if let Err(ref e) = resp {
