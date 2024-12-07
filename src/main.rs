@@ -283,7 +283,7 @@ async fn command_handler(
                 .parse_mode(teloxide::types::ParseMode::Markdown)
                 .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::url(
                     "Gift Dev!",
-                    "https://taiho.moe/ireina-gifting".try_into().unwrap(),
+                    "https://t.me/ireina_bot/gifting".try_into().unwrap(),
                 )]]))
                 .await
         }
@@ -328,7 +328,7 @@ async fn inline_query_handler(
             )
             .reply_markup(InlineKeyboardMarkup::new([[InlineKeyboardButton::url(
                 "Gift Dev!",
-                "https://taiho.moe/ireina-gifting".try_into().unwrap(),
+                "https://t.me/ireina_bot/gifting".try_into().unwrap(),
             )]]))
             .into()],
         )
